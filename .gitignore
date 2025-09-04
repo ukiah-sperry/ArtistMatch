@@ -1,0 +1,27 @@
+# macOS / Python
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.cache
+.vscode/
+
+# Node / build
+node_modules/
+dist/
+build/
+
+# ML artifacts & big files
+runs/
+static/detections/
+*.pt
+*.weights
+*.onnx
+*.engine
+
+# Data (keep only the YAML)
+dataset/*
+!dataset/poster.yaml
+posters/

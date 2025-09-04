@@ -1,0 +1,4 @@
+path: /Users/ukiahsperry/Projects/ocr/dataset
+train: images/train
+val: images/val
+names: [text]
