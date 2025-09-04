@@ -25,3 +25,6 @@ static/detections/
 dataset/*
 !dataset/poster.yaml
 posters/
+
+.env
+.cache
