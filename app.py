@@ -299,19 +299,15 @@ def _token_valid(token_info: dict) -> bool:
 
 def spotify_client_from_session() -> Spotify | None:
     token_info = session.get("token_info")
-    print(f"[DEBUG spotify_client] token_info present: {token_info is not None}, valid: {_token_valid(token_info)}")
     if not _token_valid(token_info):
         if token_info and token_info.get("refresh_token"):
             try:
                 token_info = get_sp_oauth().refresh_access_token(token_info["refresh_token"])
                 session["token_info"] = token_info
-                print(f"[DEBUG spotify_client] refreshed token, valid: {_token_valid(token_info)}")
-            except Exception as e:
-                print(f"[DEBUG spotify_client] refresh failed: {e}")
+            except Exception:
                 session.pop("token_info", None)
                 return None
         else:
-            print("[DEBUG spotify_client] no refresh_token available")
             return None
     return Spotify(auth=token_info["access_token"])
 
@@ -426,40 +422,37 @@ def login():
 @app.route('/callback')
 @limiter.limit("10 per minute")
 def callback():
-    code = request.args.get('code')
+    # Guard: if this session already has a valid token (e.g. browser replayed the
+    # callback URL), skip the code exchange to avoid invalid_grant from Spotify.
+    if _token_valid(session.get('token_info')):
+        return redirect(url_for('upload'))
+
     error = request.args.get('error')
-
     if error:
-        print(f"Spotify OAuth error: {error}")
         session.clear()
-        return render_template('upload.html',
-                               error=f"Spotify authentication failed: {error}",
-                               user=None)
+        session['_flash_error'] = f"Spotify authentication failed: {error}"
+        return redirect(url_for('upload'))
 
+    code = request.args.get('code')
     if not code:
         session.clear()
-        return render_template('upload.html',
-                               error="No authorization code received from Spotify",
-                               user=None)
+        session['_flash_error'] = "No authorization code received from Spotify."
+        return redirect(url_for('upload'))
+
     try:
-        session.clear()  # drop any previous user's data before writing new token
-        # check_cache=False forces code exchange even if MemoryCacheHandler has a token
-        token_info = get_sp_oauth().get_access_token(code, as_dict=True, check_cache=False)
-        print(f"[DEBUG /callback] token_info keys: {list(token_info.keys()) if token_info else None}")
-        print(f"[DEBUG /callback] expires_at present: {'expires_at' in (token_info or {})}")
-        print(f"[DEBUG /callback] token valid: {_token_valid(token_info)}")
-        session['token_info'] = token_info
-        user = current_spotify_user()
-        print(f"[DEBUG /callback] current_spotify_user returned: {user and user.get('id')}")
-        return render_template('upload.html',
-                               success="Successfully connected to Spotify!",
-                               user=user)
-    except Exception as e:
-        print(f"[DEBUG /callback] Exception during token exchange: {type(e).__name__}: {e}")
         session.clear()
-        return render_template('upload.html',
-                               error=f"Failed to connect to Spotify: {str(e)}",
-                               user=None)
+        # check_cache=False ensures we always exchange the fresh code, never return
+        # a stale MemoryCacheHandler entry (belt-and-suspenders with MemoryCacheHandler).
+        token_info = get_sp_oauth().get_access_token(code, as_dict=True, check_cache=False)
+        session['token_info'] = token_info
+        session['_flash_success'] = "Successfully connected to Spotify!"
+    except Exception as e:
+        session.clear()
+        session['_flash_error'] = f"Failed to connect to Spotify: {e}"
+
+    # PRG pattern: redirect so the callback URL leaves the browser history.
+    # Prevents invalid_grant if the user refreshes or the browser replays the URL.
+    return redirect(url_for('upload'))
 
 @app.route('/logout')
 def logout():
@@ -520,8 +513,10 @@ def upload():
             user=current_spotify_user()
         )
 
-    # GET
-    return render_template('upload.html', user=current_spotify_user())
+    # GET — pop any flash messages set by /callback redirect
+    success = session.pop('_flash_success', None)
+    error   = session.pop('_flash_error', None)
+    return render_template('upload.html', user=current_spotify_user(), success=success, error=error)
 
 @app.route('/festival/<slug>')
 @limiter.limit("5 per minute")
