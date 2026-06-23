@@ -328,6 +328,112 @@ img { max-width: 100%; display: block; }
   max-width: 100%;
 }
 
+/* ── Festival selector ──────────────────────────────────────── */
+
+.festival-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.festival-card {
+  display: flex;
+  align-items: center;
+  gap: 1.125rem;
+  padding: 1.125rem 1.375rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  cursor: pointer;
+}
+
+.festival-card:hover {
+  border-color: var(--accent);
+  background: rgba(29, 185, 84, 0.06);
+  transform: translateY(-1px);
+}
+
+.festival-card-icon { font-size: 1.625rem; flex-shrink: 0; line-height: 1; }
+
+.festival-card-info { flex: 1; min-width: 0; }
+
+.festival-card-name {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+
+.festival-card-meta {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.875rem;
+}
+
+.festival-card-meta i { color: var(--accent); }
+
+.festival-card-arrow {
+  color: var(--accent);
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+}
+
+.festival-card-soon {
+  opacity: 0.38;
+  cursor: default;
+  pointer-events: none;
+}
+
+.soon-badge {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+/* ── Section divider ────────────────────────────────────────── */
+
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 2rem 0 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.section-divider::before,
+.section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Secondary upload heading ───────────────────────────────── */
+
+.upload-secondary-heading {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 /* Submit */
 
 .upload-actions { margin-top: 1.25rem; }

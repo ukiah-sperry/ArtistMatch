@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}ArtistMatch — Scan Your Festival Poster{% endblock %}
+{% block title %}ArtistMatch — Find Your Must-See Acts{% endblock %}
 
 {% block content %}
 <main class="upload-main">
@@ -25,12 +25,45 @@
       </div>
     {% endif %}
 
+    {# ── Primary: festival selector ── #}
     <section class="hero">
-      <h1 class="hero-heading">Drop a festival poster.<br>Find your must-see acts.</h1>
-      <p class="hero-sub">Upload any festival lineup image and we'll rank the artists by your Spotify library.</p>
+      <h1 class="hero-heading">Find Your Must-See Acts</h1>
+      <p class="hero-sub">Select a festival to match artists with your Spotify library.</p>
     </section>
 
+    <div class="festival-grid">
+      <a class="festival-card" href="{{ url_for('festival', slug='electric-forest-2026') }}">
+        <span class="festival-card-icon">🌲</span>
+        <div class="festival-card-info">
+          <div class="festival-card-name">Electric Forest 2026</div>
+          <div class="festival-card-meta">
+            <span><i class="fas fa-calendar-alt"></i> June 25–28, 2026</span>
+            <span><i class="fas fa-map-marker-alt"></i> Rothbury, MI</span>
+          </div>
+        </div>
+        <i class="fas fa-chevron-right festival-card-arrow"></i>
+      </a>
+
+      <div class="festival-card festival-card-soon">
+        <span class="festival-card-icon">🎪</span>
+        <div class="festival-card-info">
+          <div class="festival-card-name">More festivals coming soon</div>
+          <div class="festival-card-meta">
+            <span>Stay tuned</span>
+          </div>
+        </div>
+        <span class="soon-badge">Soon</span>
+      </div>
+    </div>
+
+    {# ── Secondary: poster upload ── #}
+    <div class="section-divider">Or upload a festival poster</div>
+
     <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+      <p class="upload-secondary-heading">
+        <i class="fas fa-image"></i>
+        Scan any poster image
+      </p>
       <div class="upload-zone" id="upload-zone">
         <input id="file" name="screenshot" type="file" accept="image/*,application/pdf" required />
         <span class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></span>
@@ -43,13 +76,14 @@
       </div>
 
       <div class="upload-actions">
-        <button type="submit" class="btn btn-accent btn-wide" data-submit disabled>
+        <button type="submit" class="btn btn-ghost btn-wide" data-submit disabled>
           <i class="fas fa-bolt"></i>
           Scan Poster
         </button>
       </div>
     </form>
 
+    {# ── Spotify callout ── #}
     <div class="spotify-callout">
       <div class="spotify-callout-text">
         {% if user %}

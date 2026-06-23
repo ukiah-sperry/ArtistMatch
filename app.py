@@ -19,6 +19,8 @@ from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
 load_dotenv()
 
+from festivals import FESTIVALS
+
 
 # Optional: PDF support
 try:
@@ -442,6 +444,33 @@ def upload():
 
     # GET
     return render_template('upload.html', user=current_spotify_user())
+
+@app.route('/festival/<slug>')
+def festival(slug):
+    fest = FESTIVALS.get(slug)
+    if not fest:
+        return redirect(url_for('upload'))
+
+    artists = fest['artists']
+    current_user = current_spotify_user()
+
+    if current_user:
+        liked_tracks = get_user_liked_tracks()
+        artist_scores, matched_tracks = match_artists_with_liked(artists, liked_tracks)
+        session['artist_scores'] = [[a, s] for a, s in artist_scores]
+    else:
+        artist_scores = [(artist, 0) for artist in artists]
+        session.pop('artist_scores', None)
+
+    return render_template(
+        'result.html',
+        artist_scores=artist_scores,
+        count=len(artist_scores),
+        user=current_user,
+        debug_image=None,
+        festival_name=fest['name'],
+    )
+
 
 @app.route('/create_playlist', methods=['POST'])
 def create_playlist():

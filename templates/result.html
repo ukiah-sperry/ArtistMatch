@@ -30,7 +30,7 @@
 
     <!-- Festival poster card -->
     <div class="poster-card">
-      <p class="poster-festival-name">Your Festival</p>
+      <p class="poster-festival-name">{{ festival_name or 'Your Festival' }}</p>
       <p class="poster-tagline">&#9733; Ranked by your Spotify library &#9733;</p>
 
       {% if artist_scores %}
