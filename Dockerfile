@@ -18,12 +18,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bundle trained YOLO weights.
-# REQUIRES: runs/detect/train/weights/best.pt must exist locally before running docker build.
-# This file is not committed to git — obtain it separately (see README.md).
-COPY runs/detect/train/weights/best.pt runs/detect/train/weights/best.pt
-
 COPY . .
+
+# Download trained YOLO weights from Hugging Face Hub at build time
+RUN mkdir -p runs/detect/train/weights && \
+    pip install huggingface_hub && \
+    python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='ukers/artistmatch-model', filename='best.pt', local_dir='runs/detect/train/weights')"
 
 EXPOSE 7860
 
