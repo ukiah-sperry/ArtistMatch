@@ -38,3 +38,4 @@ static/detections/
 
 .env
 .cache
+runs/detect/train/weights/best.pt
