@@ -18,6 +18,7 @@ from rapidfuzz import process, fuzz
 # Spotify OAuth
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import MemoryCacheHandler
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -277,12 +278,16 @@ def save_debug_image(pil_img, boxes, out_path):
 # ───────── Spotify helpers
 
 def get_sp_oauth(scope=None) -> SpotifyOAuth:
+    # MemoryCacheHandler prevents Spotipy from writing/reading a .cache file.
+    # Without this, cache_path=None still creates CacheFileHandler(".cache"), and
+    # get_access_token(check_cache=True) returns the stale disk token instead of
+    # exchanging the fresh OAuth code — breaking show_dialog=True re-logins.
     return SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
         redirect_uri=SPOTIFY_REDIRECT_URI,
         scope=scope or SPOTIFY_SCOPE,
-        cache_path=None,       # keep token in session, not on disk
+        cache_handler=MemoryCacheHandler(),
         show_dialog=True,
     )
 
@@ -294,15 +299,19 @@ def _token_valid(token_info: dict) -> bool:
 
 def spotify_client_from_session() -> Spotify | None:
     token_info = session.get("token_info")
+    print(f"[DEBUG spotify_client] token_info present: {token_info is not None}, valid: {_token_valid(token_info)}")
     if not _token_valid(token_info):
         if token_info and token_info.get("refresh_token"):
             try:
                 token_info = get_sp_oauth().refresh_access_token(token_info["refresh_token"])
                 session["token_info"] = token_info
-            except Exception:
+                print(f"[DEBUG spotify_client] refreshed token, valid: {_token_valid(token_info)}")
+            except Exception as e:
+                print(f"[DEBUG spotify_client] refresh failed: {e}")
                 session.pop("token_info", None)
                 return None
         else:
+            print("[DEBUG spotify_client] no refresh_token available")
             return None
     return Spotify(auth=token_info["access_token"])
 
@@ -434,13 +443,19 @@ def callback():
                                user=None)
     try:
         session.clear()  # drop any previous user's data before writing new token
-        token_info = get_sp_oauth().get_access_token(code, as_dict=True)
+        # check_cache=False forces code exchange even if MemoryCacheHandler has a token
+        token_info = get_sp_oauth().get_access_token(code, as_dict=True, check_cache=False)
+        print(f"[DEBUG /callback] token_info keys: {list(token_info.keys()) if token_info else None}")
+        print(f"[DEBUG /callback] expires_at present: {'expires_at' in (token_info or {})}")
+        print(f"[DEBUG /callback] token valid: {_token_valid(token_info)}")
         session['token_info'] = token_info
+        user = current_spotify_user()
+        print(f"[DEBUG /callback] current_spotify_user returned: {user and user.get('id')}")
         return render_template('upload.html',
                                success="Successfully connected to Spotify!",
-                               user=current_spotify_user())
+                               user=user)
     except Exception as e:
-        print("Spotify auth error:", e)
+        print(f"[DEBUG /callback] Exception during token exchange: {type(e).__name__}: {e}")
         session.clear()
         return render_template('upload.html',
                                error=f"Failed to connect to Spotify: {str(e)}",
