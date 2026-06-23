@@ -1,0 +1,17 @@
+.venv/
+venv/
+uploads/
+static/detections/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.env
+dataset/
+.git/
+.gitignore
+.DS_Store
+**/.DS_Store
+.cache
+.vscode/
+*.json.bak

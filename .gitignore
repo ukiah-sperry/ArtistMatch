@@ -13,10 +13,16 @@ node_modules/
 dist/
 build/
 
-# ML artifacts & big files
-runs/
-static/detections/
-*.pt
+# ML training artifacts — exclude everything in runs/ EXCEPT the final weights.
+# Must use runs/** (not runs/) so git traverses the directory and negations work.
+runs/**
+!runs/detect/
+!runs/detect/train/
+!runs/detect/train/weights/
+!runs/detect/train/weights/best.pt
+
+# Downloaded base models (not the trained weights)
+yolov8n.pt
 *.weights
 *.onnx
 *.engine
@@ -25,6 +31,10 @@ static/detections/
 dataset/*
 !dataset/poster.yaml
 posters/
+
+# Runtime output
+uploads/
+static/detections/
 
 .env
 .cache

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{% block title %}ArtistMatch{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="{{ url_for('upload') }}">
+        <i class="fas fa-music logo-icon"></i>
+        <span class="logo-text">ArtistMatch</span>
+      </a>
+      <nav class="nav-user">
+        {% if user %}
+          <div class="nav-user-info">
+            <i class="fab fa-spotify sp-icon"></i>
+            <span>{{ user.display_name or user.id }}</span>
+            <a href="{{ url_for('logout') }}" class="nav-disconnect">Disconnect</a>
+          </div>
+        {% else %}
+          <a href="{{ url_for('login') }}" class="btn btn-accent btn-pill">
+            <i class="fab fa-spotify"></i>
+            Connect Spotify
+          </a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  {% block content %}{% endblock %}
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

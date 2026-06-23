@@ -1,6 +1,6 @@
 import os, io, re, sys, time
 from pathlib import Path
-from flask import Flask, request, render_template, url_for, session, redirect
+from flask import Flask, request, render_template, url_for, session, redirect, jsonify
 from werkzeug.utils import secure_filename
 
 
@@ -43,7 +43,7 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "replace-with-secure-random-in-pr
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback")
-SPOTIFY_SCOPE = "user-library-read user-follow-read"
+SPOTIFY_SCOPE = "user-library-read user-follow-read playlist-modify-public playlist-modify-private"
 
 # Print Spotify config for debugging (remove in production)
 print(f"Spotify Config:")
@@ -55,7 +55,16 @@ def allowed_file(fname: str) -> bool:
     return '.' in fname and fname.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # ───────── Load models once
-DETECTOR = YOLO(str(Path('runs/detect/train/weights/best.pt')))
+_WEIGHTS = Path('runs/detect/train/weights/best.pt')
+if not _WEIGHTS.exists():
+    print(
+        f"\n[ERROR] Model weights not found at: {_WEIGHTS.resolve()}\n"
+        "        Run `python download_model.py` for instructions.\n"
+        "        The app cannot start without best.pt.\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+DETECTOR = YOLO(str(_WEIGHTS))
 READER = easyocr.Reader(['en'], gpu=False)
 
 # Apple Silicon acceleration (Ultralytics will auto-select if None)
@@ -255,63 +264,94 @@ def current_spotify_user():
         return None
 
 def get_user_liked_tracks():
-    """Fetch all liked tracks from user's Spotify library."""
+    """Fetch all liked tracks; return list of {artist_name, track_uri, track_name} dicts."""
     sp = spotify_client_from_session()
     if not sp:
         return []
-    
+
     liked_tracks = []
     offset = 0
     limit = 50
-    
+
     try:
         while True:
             results = sp.current_user_saved_tracks(limit=limit, offset=offset)
-            tracks = results.get('items', [])
-            if not tracks:
+            items = results.get('items', [])
+            if not items:
                 break
-                
-            for item in tracks:
-                track = item.get('track', {})
-                if track:
-                    artists = [artist['name'] for artist in track.get('artists', [])]
-                    liked_tracks.extend(artists)
-            
+
+            for item in items:
+                track = item.get('track') or {}
+                if not track:
+                    continue
+                track_uri  = track.get('uri')
+                track_name = track.get('name', '')
+                for artist in track.get('artists', []):
+                    liked_tracks.append({
+                        'artist_name': artist['name'],
+                        'track_uri':   track_uri,
+                        'track_name':  track_name,
+                    })
+
             offset += limit
-            if len(tracks) < limit:
+            if len(items) < limit:
                 break
-                
+
     except Exception as e:
         print(f"Error fetching liked tracks: {e}")
         return []
-    
+
     return liked_tracks
 
-def match_artists_with_liked(extracted_artists, liked_artists):
-    """Match extracted artists with user's liked artists and rank by match count."""
-    if not liked_artists:
-        return [(artist, 0) for artist in extracted_artists]
-    
+def match_artists_with_liked(extracted_artists, liked_tracks):
+    """Match extracted artists with liked tracks.
+
+    Returns (artist_scores, matched_tracks) where:
+      artist_scores  — list of (artist_name, score) tuples, sorted desc then alpha
+      matched_tracks — dict {artist_name: [track_uri, ...]} for artists with score > 0,
+                       in the same order as artist_scores
+    """
+    if not liked_tracks:
+        return [(artist, 0) for artist in extracted_artists], {}
+
     artist_scores = []
-    
+    per_artist_uris = {}
+
     for artist in extracted_artists:
-        # Count exact matches and fuzzy matches
-        exact_matches = sum(1 for liked in liked_artists if liked.lower() == artist.lower())
-        
-        # Also check for fuzzy matches (in case of slight variations)
-        fuzzy_matches = 0
-        if exact_matches == 0:
-            for liked in liked_artists:
-                similarity = fuzz.ratio(artist.lower(), liked.lower())
-                if similarity > 85:  # High threshold for fuzzy matching
-                    fuzzy_matches += 1
-        
-        total_score = exact_matches + (fuzzy_matches * 0.8)  # Weight fuzzy matches slightly less
-        artist_scores.append((artist, int(total_score)))
-    
-    # Sort by score (descending), then alphabetically
+        exact_uris  = []
+        fuzzy_uris  = []
+        seen_uris   = set()
+
+        for track in liked_tracks:
+            liked_name = track['artist_name']
+            uri        = track.get('track_uri')
+            if not uri:
+                continue
+
+            if liked_name.lower() == artist.lower():
+                if uri not in seen_uris:
+                    seen_uris.add(uri)
+                    exact_uris.append(uri)
+            elif fuzz.ratio(artist.lower(), liked_name.lower()) > 85:
+                if uri not in seen_uris:
+                    seen_uris.add(uri)
+                    fuzzy_uris.append(uri)
+
+        score = len(exact_uris) + int(len(fuzzy_uris) * 0.8)
+        artist_scores.append((artist, score))
+        all_uris = exact_uris + fuzzy_uris
+        if all_uris:
+            per_artist_uris[artist] = all_uris
+
     artist_scores.sort(key=lambda x: (-x[1], x[0].lower()))
-    return artist_scores
+
+    # matched_tracks ordered by score descending (dict preserves insertion order)
+    matched_tracks = {
+        artist: per_artist_uris[artist]
+        for artist, score in artist_scores
+        if score > 0 and artist in per_artist_uris
+    }
+    return artist_scores, matched_tracks
 
 # ───────── Spotify routes
 
@@ -379,12 +419,13 @@ def upload():
 
         # 5) Get user's liked songs and match with extracted artists
         current_user = current_spotify_user()
-        artist_scores = []
         if current_user:
-            liked_artists = get_user_liked_tracks()
-            artist_scores = match_artists_with_liked(artists, liked_artists)
+            liked_tracks = get_user_liked_tracks()
+            artist_scores, matched_tracks = match_artists_with_liked(artists, liked_tracks)
+            session['artist_scores'] = [[a, s] for a, s in artist_scores]
         else:
             artist_scores = [(artist, 0) for artist in artists]
+            session.pop('artist_scores', None)
 
         # 6) debugger image
         dbg_name = f"det_{secure_filename(f.filename)}.jpg"
@@ -402,5 +443,50 @@ def upload():
     # GET
     return render_template('upload.html', user=current_spotify_user())
 
+@app.route('/create_playlist', methods=['POST'])
+def create_playlist():
+    sp = spotify_client_from_session()
+    if not sp:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    stored_scores = session.get('artist_scores')
+    if not stored_scores:
+        return jsonify({'success': False, 'error': 'No matched songs found. Connect Spotify first.'})
+
+    # Re-fetch liked tracks and rebuild matched_tracks live (avoids session size limits)
+    artists_in_order = [name for name, score in stored_scores if score > 0]
+    if not artists_in_order:
+        return jsonify({'success': False, 'error': 'No matched songs found. Connect Spotify first.'})
+
+    liked_tracks = get_user_liked_tracks()
+    _, matched_tracks = match_artists_with_liked(artists_in_order, liked_tracks)
+
+    if not matched_tracks:
+        return jsonify({'success': False, 'error': 'No matched songs found. Connect Spotify first.'})
+
+    # Flatten URIs: rank-1 artist first, rank-2 next, etc.
+    all_uris = [uri for uris in matched_tracks.values() for uri in uris]
+
+    try:
+        user_id  = sp.current_user()['id']
+        playlist = sp.user_playlist_create(
+            user_id,
+            'Your Electric Forest 2026 Playlist',
+            public=False,
+            description='Generated by ArtistMatch — your liked songs from this festival lineup',
+        )
+        playlist_id = playlist['id']
+
+        for i in range(0, len(all_uris), 100):  # Spotify max 100 per call
+            sp.playlist_add_items(playlist_id, all_uris[i:i + 100])
+
+        return jsonify({'success': True, 'playlist_url': playlist['external_urls']['spotify']})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=8000, debug=True)
+    on_hf = bool(os.getenv('SPACE_ID') or os.getenv('HF_SPACE_ID'))
+    host  = '0.0.0.0'   if on_hf else '127.0.0.1'
+    port  = 7860        if on_hf else 8000
+    app.run(host=host, port=port, debug=not on_hf)
