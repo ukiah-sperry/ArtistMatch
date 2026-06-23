@@ -238,7 +238,7 @@ def get_sp_oauth() -> SpotifyOAuth:
         redirect_uri=SPOTIFY_REDIRECT_URI,
         scope=SPOTIFY_SCOPE,
         cache_path=None,       # keep token in session, not on disk
-        show_dialog=False
+        show_dialog=True
     )
 
 def _token_valid(token_info: dict) -> bool:
