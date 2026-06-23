@@ -39,7 +39,12 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join(app.root_path, 'static', 'detections'), exist_ok=True)
 
 # Secret key (needed for session-based Spotify tokens)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "replace-with-secure-random-in-prod")
+# Must be set via FLASK_SECRET_KEY env var — a weak or missing key breaks session isolation.
+_secret = os.getenv("FLASK_SECRET_KEY")
+if not _secret:
+    raise RuntimeError("FLASK_SECRET_KEY environment variable is not set. "
+                       "Set a long random string in your .env or Space secrets.")
+app.secret_key = _secret
 
 # Spotify config
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
@@ -359,38 +364,43 @@ def match_artists_with_liked(extracted_artists, liked_tracks):
 
 @app.route('/login')
 def login():
+    session.clear()  # wipe any previous user's data before starting a new OAuth flow
     return redirect(get_sp_oauth().get_authorize_url())
 
 @app.route('/callback')
 def callback():
     code = request.args.get('code')
     error = request.args.get('error')
-    
+
     if error:
         print(f"Spotify OAuth error: {error}")
-        return render_template('upload.html', 
-                             error=f"Spotify authentication failed: {error}", 
-                             user=current_spotify_user())
-    
+        session.clear()
+        return render_template('upload.html',
+                               error=f"Spotify authentication failed: {error}",
+                               user=None)
+
     if not code:
-        return render_template('upload.html', 
-                             error="No authorization code received from Spotify", 
-                             user=current_spotify_user())
+        session.clear()
+        return render_template('upload.html',
+                               error="No authorization code received from Spotify",
+                               user=None)
     try:
+        session.clear()  # drop any previous user's data before writing new token
         token_info = get_sp_oauth().get_access_token(code, as_dict=True)
         session['token_info'] = token_info
-        return render_template('upload.html', 
-                             success="Successfully connected to Spotify!", 
-                             user=current_spotify_user())
+        return render_template('upload.html',
+                               success="Successfully connected to Spotify!",
+                               user=current_spotify_user())
     except Exception as e:
         print("Spotify auth error:", e)
-        return render_template('upload.html', 
-                             error=f"Failed to connect to Spotify: {str(e)}", 
-                             user=current_spotify_user())
+        session.clear()
+        return render_template('upload.html',
+                               error=f"Failed to connect to Spotify: {str(e)}",
+                               user=None)
 
 @app.route('/logout')
 def logout():
-    session.pop('token_info', None)
+    session.clear()  # clear all session keys, not just token_info
     return redirect(url_for('upload'))
 
 # ───────── App routes
