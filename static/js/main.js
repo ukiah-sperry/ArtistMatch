@@ -82,8 +82,20 @@
       playlistBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating playlist…';
 
       fetch('/create_playlist', { method: 'POST' })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
+        .then(function (res) {
+          return res.json().then(function (data) {
+            return { status: res.status, data: data };
+          });
+        })
+        .then(function (payload) {
+          var status = payload.status;
+          var data   = payload.data;
+
+          if (status === 403 && data.error === 'playlist_scope_required') {
+            window.location.href = '/login?extended=1';
+            return;
+          }
+
           if (data.success) {
             playlistBtn.style.display = 'none';
             playlistResult.innerHTML =

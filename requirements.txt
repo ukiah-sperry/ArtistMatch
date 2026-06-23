@@ -8,3 +8,5 @@ Pillow>=10.0.0
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 pdf2image>=1.16.0
+flask-limiter>=3.5.0
+flask-talisman>=1.1.0

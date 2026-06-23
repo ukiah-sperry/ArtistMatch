@@ -2,6 +2,9 @@ import os, io, re, sys, time
 from pathlib import Path
 from flask import Flask, request, render_template, url_for, session, redirect, jsonify
 from werkzeug.utils import secure_filename
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
 
 
 import numpy as np
@@ -46,11 +49,35 @@ if not _secret:
                        "Set a long random string in your .env or Space secrets.")
 app.secret_key = _secret
 
-# Spotify config
-SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+# ───────── Rate limiting (in-memory; swap storage_uri for Redis in production)
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["60 per minute"],
+    storage_uri="memory://",
+)
+
+# ───────── Security headers
+Talisman(
+    app,
+    force_https=False,               # HF Spaces / reverse proxy handles TLS termination
+    strict_transport_security=False, # ditto
+    content_security_policy={
+        'default-src': "'self'",
+        'script-src':  ["'self'", 'cdnjs.cloudflare.com'],
+        'style-src':   ["'self'", 'cdnjs.cloudflare.com', 'fonts.googleapis.com'],
+        'font-src':    ["'self'", 'cdnjs.cloudflare.com', 'fonts.gstatic.com'],
+        'img-src':     ["'self'", 'data:'],  # data: needed for upload thumbnail preview
+    },
+)
+
+# ───────── Spotify config
+SPOTIFY_CLIENT_ID     = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
-SPOTIFY_REDIRECT_URI = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback")
-SPOTIFY_SCOPE = "user-library-read user-follow-read playlist-modify-public playlist-modify-private"
+SPOTIFY_REDIRECT_URI  = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8000/callback")
+# Minimal default scope; playlist scopes are requested lazily via /login?extended=1
+SPOTIFY_SCOPE          = "user-library-read"
+SPOTIFY_SCOPE_EXTENDED = "user-library-read playlist-modify-public playlist-modify-private"
 
 # Print Spotify config for debugging (remove in production)
 print(f"Spotify Config:")
@@ -152,6 +179,13 @@ def read_image_from_upload(file_storage):
             raise RuntimeError("Could not read PDF.")
         img = pages[0].convert('RGB')
     else:
+        # Verify the file is a real image before passing to the ML pipeline.
+        # verify() closes the internal file handle, so we must re-open afterward.
+        try:
+            probe = Image.open(io.BytesIO(data))
+            probe.verify()
+        except Exception:
+            raise ValueError("Invalid image file")
         img = Image.open(io.BytesIO(data)).convert('RGB')
     return img
 
@@ -220,6 +254,17 @@ def dedupe_and_sort(lines):
     uniq = fuzzy_dedupe(cleaned, threshold=92)
     return sorted(uniq, key=lambda x: x.lower())
 
+def cleanup_old_detections(max_age_seconds=3600):
+    """Delete detection images older than max_age_seconds from static/detections/."""
+    detections_dir = Path(app.root_path) / 'static' / 'detections'
+    now = time.time()
+    for f in detections_dir.iterdir():
+        if f.is_file() and (now - f.stat().st_mtime) > max_age_seconds:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
 def save_debug_image(pil_img, boxes, out_path):
     """Draw YOLO boxes for visual debugging."""
     import cv2
@@ -231,14 +276,14 @@ def save_debug_image(pil_img, boxes, out_path):
 
 # ───────── Spotify helpers
 
-def get_sp_oauth() -> SpotifyOAuth:
+def get_sp_oauth(scope=None) -> SpotifyOAuth:
     return SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
         redirect_uri=SPOTIFY_REDIRECT_URI,
-        scope=SPOTIFY_SCOPE,
+        scope=scope or SPOTIFY_SCOPE,
         cache_path=None,       # keep token in session, not on disk
-        show_dialog=True
+        show_dialog=True,
     )
 
 def _token_valid(token_info: dict) -> bool:
@@ -363,11 +408,14 @@ def match_artists_with_liked(extracted_artists, liked_tracks):
 # ───────── Spotify routes
 
 @app.route('/login')
+@limiter.limit("10 per minute")
 def login():
     session.clear()  # wipe any previous user's data before starting a new OAuth flow
-    return redirect(get_sp_oauth().get_authorize_url())
+    scope = SPOTIFY_SCOPE_EXTENDED if request.args.get('extended') == '1' else SPOTIFY_SCOPE
+    return redirect(get_sp_oauth(scope=scope).get_authorize_url())
 
 @app.route('/callback')
+@limiter.limit("10 per minute")
 def callback():
     code = request.args.get('code')
     error = request.args.get('error')
@@ -406,14 +454,19 @@ def logout():
 # ───────── App routes
 
 @app.route('/', methods=['GET', 'POST'])
+@limiter.limit("5 per minute", methods=["POST"])
 def upload():
     if request.method == 'POST':
+        cleanup_old_detections()
+
         f = request.files.get('screenshot')
         if not f or not allowed_file(f.filename):
             return render_template('upload.html', error="Please upload a PNG, JPEG, or PDF.", user=current_spotify_user())
 
         try:
             img = read_image_from_upload(f)
+        except ValueError:
+            return render_template('upload.html', error="Invalid image file.", user=current_spotify_user())
         except Exception as e:
             return render_template('upload.html', error=f"Could not read image: {e}", user=current_spotify_user())
 
@@ -456,6 +509,7 @@ def upload():
     return render_template('upload.html', user=current_spotify_user())
 
 @app.route('/festival/<slug>')
+@limiter.limit("5 per minute")
 def festival(slug):
     fest = FESTIVALS.get(slug)
     if not fest:
@@ -487,6 +541,12 @@ def create_playlist():
     sp = spotify_client_from_session()
     if not sp:
         return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    # Check that the token actually has playlist-modify scopes (lazy scope upgrade)
+    token_info = session.get('token_info', {})
+    granted = set(token_info.get('scope', '').split())
+    if not granted & {'playlist-modify-public', 'playlist-modify-private'}:
+        return jsonify({'success': False, 'error': 'playlist_scope_required'}), 403
 
     stored_scores = session.get('artist_scores')
     if not stored_scores:
@@ -528,4 +588,5 @@ if __name__ == '__main__':
     on_hf = bool(os.getenv('SPACE_ID') or os.getenv('HF_SPACE_ID'))
     host  = '0.0.0.0'   if on_hf else '127.0.0.1'
     port  = 7860        if on_hf else 8000
+    # debug=True only in local dev — never on HF Spaces regardless of other settings
     app.run(host=host, port=port, debug=not on_hf)
